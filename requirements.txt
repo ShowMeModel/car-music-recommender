@@ -1,0 +1,10 @@
+pandas
+numpy
+matplotlib
+seaborn
+pandas-profiling
+pandasql
+plotly
+apyori
+lightfm
+tpot
