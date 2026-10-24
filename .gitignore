@@ -109,3 +109,6 @@ venv.bak/
 # Local-only banner generator (as in the other PuzzleLearning repos):
 # the generated docs/banner-*.svg are committed, the script is not.
 tools/
+
+# Local guidance for Claude Code; kept out of the repository.
+CLAUDE.md
