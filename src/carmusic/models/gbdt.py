@@ -14,8 +14,9 @@ engineered features, and repairs the parts that made it unsound.
 * **Two regimes, one model.** "What did this driver give this song before" is
   the strongest single clue, and it only exists for songs the driver has
   rated. Every training row is therefore encoded twice: once cross-fitted by
-  rows (the song is known) and once cross-fitted by whole (driver, song) pairs
-  (the song is new, so pair features are missing). The trees learn both
+  single (driver, song, situation) questions (the song is known) and once by
+  whole (driver, song) pairs (the song is new, so pair features are missing).
+  These are the same groupings the evaluation protocols use. The trees learn both
   regimes, and at prediction time a missing pair feature routes a row to the
   "new song" branch.
 * **Monotone where common sense says so.** A song the driver rated higher
@@ -38,9 +39,9 @@ from typing import Self
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.model_selection import GroupKFold, KFold
+from sklearn.model_selection import GroupKFold
 
-from ..data import NO_CONTEXT, pair_keys
+from ..data import NO_CONTEXT, pair_keys, question_keys
 from ..protocol import holdout
 from .base import RatingModel
 
@@ -53,8 +54,6 @@ NUMERIC = {
     "user_genre_mean": 1,
     "pair_mean": 1,
     "pair_neutral": 1,
-    "pair_count": 0,
-    "user_count": 0,
     "cond_shift": 1,
     "genre_cond_shift": 1,
     "item_cond_shift": 1,
@@ -117,7 +116,7 @@ class ContextGBDT(RatingModel):
             total, count = _lookup(_stats(frame, cols, value), rows, cols)
             return (total + m * prior) / (count + m), count
 
-        user_mean, user_n = shrunk(["user"], mu)
+        user_mean, _ = shrunk(["user"], mu)
         item_mean, _ = shrunk(["item"], mu)
         user_genre_mean, _ = shrunk(["user", "genre"], user_mean)
 
@@ -146,8 +145,6 @@ class ContextGBDT(RatingModel):
                     "user_genre_mean": user_genre_mean,
                     "pair_mean": np.where(pair_n > 0, pair_sum / pair_n, np.nan),
                     "pair_neutral": np.where(neutral_n > 0, neutral_sum / neutral_n, np.nan),
-                    "pair_count": pair_n,
-                    "user_count": np.log1p(user_n),
                     "cond_shift": cond_shift,
                     "genre_cond_shift": genre_cond_shift,
                     "item_cond_shift": item_cond_shift,
@@ -167,8 +164,10 @@ class ContextGBDT(RatingModel):
         ``ratings`` of the row that line ``k`` of ``X`` describes.
         """
         y = ratings["rating"].to_numpy(dtype=float)
+        # Known song: hide single questions (a repeated answer to the same question
+        # goes with it). New song: hide whole (driver, song) pairs, twins included.
         regimes = [
-            (KFold(self.n_folds, shuffle=True, random_state=self.seed), None),
+            (GroupKFold(self.n_folds, shuffle=True, random_state=self.seed), question_keys(ratings)),
             (GroupKFold(self.n_folds, shuffle=True, random_state=self.seed), pair_keys(ratings)),
         ]
         parts, origin = [], []

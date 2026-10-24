@@ -33,3 +33,13 @@ def test_rows_for_frames_the_whole_catalogue(data):
     assert set(rows["dimension"]) == {"traffic conditions"}
     with pytest.raises(KeyError):
         data.rows_for(1019, "on the moon")
+
+
+def test_twin_songs_share_one_song_id(data):
+    twins = data.songs[data.songs["item"] != data.songs["song"]]
+    assert len(twins) == 6
+    assert data.songs["song"].nunique() == 133
+    by_item = data.songs.set_index("item")
+    assert by_item.loc[725, "song"] == by_item.loc[680, "song"] == 680  # Bad Romance (- Radio Edit)
+    for item, song in zip(twins["item"], twins["song"], strict=True):
+        assert by_item.loc[item, "artist"] == by_item.loc[song, "artist"]

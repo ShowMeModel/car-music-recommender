@@ -24,7 +24,7 @@ version starts again:
 The answer is smaller than 0.79, and more interesting. A situation moves a
 rating by a fraction of a star, enough to reorder a driver's top five. Knowing
 the situation helps most with songs the driver has never rated: there, the
-best model cuts the error of a context-free recommender by 8%.
+best model cuts the error of a context-free recommender by 9%.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
@@ -71,7 +71,7 @@ redistributed by [CARSKit](https://github.com/irecsys/CARSKit). It holds:
 |---|---|
 | ratings | 4,012 (0–5 stars) |
 | drivers | 42 |
-| songs | 139, in 10 genres; 82 of them are pop |
+| songs | 139 ids in 10 genres, 82 of them pop; 133 distinct songs (six are listed twice) |
 | situations | 26 conditions in 8 dimensions |
 | ratings per driver | 4 to 832 (median 40) |
 
@@ -89,6 +89,16 @@ The structure of the experiment is what matters most for modelling:
   rating, the average situational rating moves between −0.45 stars (*sad*) and
   +0.29 (*night*). *Traffic jam*, *sleepy* and *lots of cars* push ratings
   down; *free road*, *highway* and *coast line* lift them.
+* **Two quirks would quietly leak if ignored.**
+  * Six songs are listed twice, as an album version and a radio edit. Examples
+    are *Bad Romance* and *Bad Romance - Radio Edit*, and *Paparazzi* entered
+    twice. In 19 cases a driver rated both versions. The loader gives twins a
+    shared `song` id.
+  * Six drivers took the survey more than once. Between them, 101 situational
+    ratings answer a (driver, song, situation) question that was already
+    answered.
+  * The evaluation keeps twins, and repeated answers, on the same side of every
+    split.
 
 ## Requirements
 
@@ -109,7 +119,7 @@ carmusic situations                                       # the 26 situations, b
 carmusic recommend --user 1033 --situation "traffic jam"  # top 5 songs (-k to change)
 carmusic evaluate                                         # both protocols, 5-fold, ~70 s
 carmusic evaluate --repeats 3                             # what the tables below report, ~3.5 min
-pytest                                                    # 28 tests, ~15 s
+pytest                                                    # 30 tests, ~17 s
 ```
 
 `python -m carmusic` works too. Tables and playlists go to **stdout**;
@@ -117,22 +127,24 @@ progress and summaries go to **stderr**.
 
 ```
 $ carmusic recommend --user 1033 --situation "free road"
- 1. 4.97  Dire Straits - Sultans of Swing  [Rock]  (rated before)
- 2. 4.83  Kate Nash - Foundations - Full Explicit Version  [Pop]  (rated before)
- 3. 4.70  Bob Marley - No Woman No Cry  [Reggae]  (rated before)
- 4. 4.65  Desmond Dekker - Israelites  [Reggae]  (rated before)
- 5. 4.63  Gossip - Heavy Cross - Album Version  [Pop]  (rated before)
+ 1. 5.00  Dire Straits - Sultans of Swing  [Rock]  (rated before)
+ 2. 5.00  Kate Nash - Foundations - Full Explicit Version  [Pop]  (rated before)
+ 3. 4.89  Deep Purple - Highway Star  [Rock]
+ 4. 4.71  Gossip - Heavy Cross - Album Version  [Pop]  (rated before)
+ 5. 4.66  Bon Jovi - Superman Tonight - Album Version  [Rock]  (rated before)
 
 $ carmusic recommend --user 1033 --situation "traffic jam"
- 1. 4.06  Dire Straits - Sultans of Swing  [Rock]  (rated before)
- 2. 3.57  Jimi Hendrix - Purple Haze  [Rock]  (rated before)
- 3. 3.40  Kate Nash - Foundations - Full Explicit Version  [Pop]  (rated before)
- 4. 3.36  B.B.King - The Thrill is Gone  [Blues]  (rated before)
- 5. 3.34  Bon Jovi - Superman Tonight - Album Version  [Rock]  (rated before)
+ 1. 4.20  Dire Straits - Sultans of Swing  [Rock]  (rated before)
+ 2. 3.86  B.B.King - The Thrill is Gone  [Blues]  (rated before)
+ 3. 3.71  Kate Nash - Foundations - Full Explicit Version  [Pop]  (rated before)
+ 4. 3.62  Led Zeppelin - I Can't Quit You Baby  [Blues]  (rated before)
+ 5. 3.57  Deep Purple - Highway Star  [Rock]
 ```
 
-In the jam every song loses about a star, and the order changes too: rock and
-blues climb past reggae and pop.
+In the jam every song loses close to a star, and the order changes too: two
+blues songs climb into the top five while pop slips out. *Highway Star* has no
+"(rated before)" mark. This driver never rated it; the model ranks it from
+everything else it knows about them.
 
 Options for `recommend`:
 
@@ -160,12 +172,13 @@ Options for `recommend`:
 cross-validation, and both score only situational ratings.
 
 * **`new-situation`: a song the driver knows, in a situation they haven't
-  rated it in.** A random fifth of the situational ratings is hidden. The
-  driver's other ratings of those songs, including the no-context one, stay
-  in training. This isolates what the situation adds.
+  rated it in.** A random fifth of the (driver, song, situation) questions is
+  hidden, including repeated answers to the same question. The driver's other
+  ratings of those songs, including the no-context one, stay in training.
+  This isolates what the situation adds.
 * **`new-song`: a song the driver has never rated.** A random fifth of the
-  (driver, song) *pairs* is hidden, with every rating of each pair. This is the
-  real recommendation case.
+  (driver, song) *pairs* is hidden, with every rating of each pair and of its
+  twin, if the song is listed twice. This is the real recommendation case.
 
 **Four metrics** (`src/carmusic/metrics.py`):
 
@@ -175,6 +188,9 @@ cross-validation, and both score only situational ratings.
   lowers every song equally doesn't change it. Pairwise accuracy reads plainly:
   of two songs the same driver rated differently in the same situation, how
   often is the better one ranked first? 0.5 is a coin flip.
+* Both ranking metrics are averaged over lists with equal weight. Three drivers
+  rated hundreds of songs; pooled, they would supply most of the pairs and
+  decide the score on their own.
 * Tied predictions count as the average over all tie orders (McSherry & Najork,
   2008). A constant predictor therefore scores exactly 0.5, not whatever order
   the rows were stored in.
@@ -184,6 +200,19 @@ validation slice of its training data that asks the same question as the
 protocol (`holdout()`): its penalty strength, or for `gbdt` its number of
 trees. For the deployed `recommend`, which must handle known and new songs
 alike, the slice mixes both.
+
+Everything else is a fixed default, chosen when the model was written and not
+searched:
+
+* for the factor models, 8 latent factors, a 400-step schedule and the penalty
+  grid `1, 3, 10, 30`;
+* for `gbdt`, its tree size, learning rate and shrinkage strength.
+
+One design decision was informed by a first evaluation run. Tuning every model
+on a single mixed validation slice over-regularised the factor models for
+known songs, which is why each now validates on the question it is asked. An
+independent review re-ran the evaluation with a far wider penalty grid
+(0.1–1000) and longer training. No result improved and no ranking changed.
 
 ## The three solutions
 
@@ -207,11 +236,12 @@ keeps it and fixes the parts that made it unsound:
   same.
 * **Known and new songs are both learned.** "What did this driver give this
   song before" is the strongest single clue, but it only exists for a song the
-  driver has rated. So every training row is encoded twice: once with the
-  folds drawn by row (the song is known), and once with the folds drawn by
-  whole (driver, song) pairs (the song is new and the pair features are
-  missing). The trees learn both regimes. At prediction time, a missing pair
-  feature sends a row down the "new song" branches.
+  driver has rated. So every training row is encoded twice. Once the folds
+  hide single (driver, song, situation) questions, so the song is known. Once
+  they hide whole (driver, song) pairs, so the song is new and the pair
+  features are missing. These are the same groupings the two protocols use.
+  The trees learn both regimes. At prediction time, a missing pair feature
+  sends a row down the "new song" branches.
 * **Context enters as shifts.** A shift is how much a situational rating
   differs from the same pair's no-context rating. Shifts are averaged per
   situation, per genre × situation, per song × situation and per driver ×
@@ -285,48 +315,52 @@ than that of context-free matrix factorisation on the same split.
 
 | model | MAE | RMSE | nDCG@10 | pair acc. | beats mf |
 |---|---:|---:|---:|---:|---:|
-| global-mean | 1.304 ± 0.023 | 1.477 ± 0.023 | 0.816 ± 0.008 | 0.500 ± 0.000 | 0/15 |
-| biases | 1.103 ± 0.041 | 1.323 ± 0.035 | 0.893 ± 0.013 | 0.715 ± 0.032 | 0/15 |
-| mf | 0.673 ± 0.027 | 0.952 ± 0.034 | 0.956 ± 0.008 | 0.890 ± 0.017 | - |
-| seen-before | 0.638 ± 0.025 | 0.982 ± 0.032 | 0.956 ± 0.010 | 0.888 ± 0.021 | 0/15 |
-| **gbdt** | 0.678 ± 0.031 | **0.929** ± 0.032 | 0.956 ± 0.007 | 0.885 ± 0.023 | 14/15 |
-| **camf** | 0.683 ± 0.024 | **0.930** ± 0.032 | **0.959** ± 0.006 | 0.886 ± 0.020 | 14/15 |
-| **fm** | 0.758 ± 0.026 | 0.991 ± 0.032 | 0.950 ± 0.009 | 0.872 ± 0.022 | 1/15 |
+| global-mean | 1.304 ± 0.029 | 1.477 ± 0.028 | 0.820 ± 0.005 | 0.500 ± 0.000 | 0/15 |
+| biases | 1.103 ± 0.032 | 1.327 ± 0.034 | 0.896 ± 0.012 | 0.680 ± 0.035 | 0/15 |
+| mf | 0.692 ± 0.038 | 0.959 ± 0.031 | 0.957 ± 0.014 | 0.860 ± 0.038 | - |
+| seen-before | 0.641 ± 0.020 | 0.982 ± 0.024 | 0.957 ± 0.011 | 0.861 ± 0.031 | 2/15 |
+| **gbdt** | 0.678 ± 0.023 | **0.935** ± 0.026 | 0.958 ± 0.011 | 0.858 ± 0.032 | 13/15 |
+| **camf** | 0.689 ± 0.022 | **0.936** ± 0.029 | 0.957 ± 0.011 | 0.855 ± 0.032 | 15/15 |
+| **fm** | 0.764 ± 0.025 | 1.009 ± 0.035 | 0.951 ± 0.012 | 0.840 ± 0.029 | 1/15 |
 
 **A song the driver has never rated** (`new-song`)
 
 | model | MAE | RMSE | nDCG@10 | pair acc. | beats mf |
 |---|---:|---:|---:|---:|---:|
-| global-mean | 1.303 ± 0.034 | 1.477 ± 0.034 | 0.818 ± 0.007 | 0.500 ± 0.000 | 0/15 |
-| biases | 1.217 ± 0.025 | 1.429 ± 0.030 | 0.848 ± 0.013 | 0.587 ± 0.039 | 1/15 |
-| mf | 1.184 ± 0.032 | 1.388 ± 0.039 | 0.863 ± 0.016 | 0.633 ± 0.042 | - |
-| seen-before | 1.217 ± 0.025 | 1.429 ± 0.030 | 0.848 ± 0.013 | 0.587 ± 0.039 | 1/15 |
-| **gbdt** | 1.050 ± 0.044 | **1.276** ± 0.050 | **0.887** ± 0.014 | **0.688** ± 0.046 | 15/15 |
-| **camf** | 1.164 ± 0.031 | 1.374 ± 0.040 | 0.871 ± 0.015 | 0.645 ± 0.047 | 15/15 |
-| **fm** | **1.046** ± 0.046 | 1.292 ± 0.049 | 0.885 ± 0.013 | 0.684 ± 0.042 | 15/15 |
+| global-mean | 1.303 ± 0.030 | 1.478 ± 0.031 | 0.820 ± 0.006 | 0.500 ± 0.000 | 0/15 |
+| biases | 1.219 ± 0.044 | 1.428 ± 0.049 | 0.851 ± 0.019 | 0.576 ± 0.044 | 2/15 |
+| mf | 1.197 ± 0.044 | 1.405 ± 0.047 | 0.863 ± 0.018 | 0.612 ± 0.040 | - |
+| seen-before | 1.219 ± 0.044 | 1.428 ± 0.049 | 0.851 ± 0.019 | 0.576 ± 0.044 | 2/15 |
+| **gbdt** | **1.047** ± 0.037 | **1.276** ± 0.041 | 0.888 ± 0.014 | 0.639 ± 0.045 | 15/15 |
+| **camf** | 1.179 ± 0.046 | 1.396 ± 0.059 | 0.864 ± 0.017 | 0.607 ± 0.036 | 14/15 |
+| **fm** | 1.048 ± 0.039 | 1.294 ± 0.054 | **0.891** ± 0.015 | **0.654** ± 0.054 | 15/15 |
 
 What the tables say:
 
-* **Context helps, modestly, and consistently.** For known songs, `gbdt` and
-  `camf` cut RMSE from 0.952 to 0.93 (−2.4%), and do so on 14 of 15 splits.
-  For new songs, `gbdt` and `fm` cut it from 1.388 to 1.276 and 1.292 (−8%
-  and −7%) on every split. They also rank better there, with pairwise accuracy 0.69
-  against 0.63.
+* **Context helps, modestly, and consistently.**
+  * For known songs, `gbdt` and `camf` cut RMSE from 0.959 to 0.935
+    (−2.5%). `camf` does so on all 15 splits and `gbdt` on 13.
+  * For new songs, `gbdt` and `fm` cut it from 1.405 to 1.276 and 1.294 (−9%
+    and −8%) on every split.
+  * They rank new songs better too: nDCG 0.89 against 0.86, and pairwise
+    accuracy 0.64–0.65 against 0.61.
 * **For a known song, memory beats modelling on MAE.** `seen-before` has the
-  lowest MAE (0.638), because more than half of situational ratings repeat
+  lowest MAE (0.641), because more than half of situational ratings repeat
   the old rating exactly and MAE rewards exact hits. The context-aware models
   win on RMSE: they avoid the large misses when a situation really does
   change the answer.
 * **Ordering a driver's known songs within one situation is already almost
-  solved without context.** `mf` reaches 0.89 pairwise accuracy, and no
-  context-aware model improves on it. Here the situation mostly moves the
-  *level* of a rating, the same for every song.
-* **No single winner.** `camf`, the dataset authors' design, is the best
-  choice for known songs: it is simple and interpretable, and ties `gbdt`.
-  `fm` is good at new songs but worse than plain MF at known ones, because one
-  shared vector per field has to serve six interactions. `gbdt` is the only
-  model in the top group on both questions, so `carmusic recommend` uses it by
-  default.
+  solved without context.** `mf` and `seen-before` reach 0.86 pairwise
+  accuracy, and no context-aware model improves on it. Here the situation
+  mostly moves the *level* of a rating, the same for every song.
+* **No single winner.**
+  * `camf`, the dataset authors' design, is the best choice for known songs.
+    It is simple and interpretable, ties `gbdt`, and beats `mf` on every
+    split.
+  * `fm` ranks new songs best, but is worse than plain MF at known ones,
+    because one shared vector per field has to serve six interactions.
+  * `gbdt` is the only model in the top group on both questions, so
+    `carmusic recommend` uses it by default.
 * **This is a hard problem.** On a new song, even the best model is off by
   more than a star on average. The data is 42 people imagining situations
   they were not in, mostly rating pop.

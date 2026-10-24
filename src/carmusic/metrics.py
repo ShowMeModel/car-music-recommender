@@ -36,20 +36,22 @@ def _groups(rows: pd.DataFrame) -> list[np.ndarray]:
 def pair_accuracy(rows: pd.DataFrame, pred: np.ndarray) -> float:
     """How often the better of two songs is ranked first.
 
-    Counts every pair of songs that one driver rated differently in one
-    situation, pooled. 0.5 is a coin flip, 1.0 a perfect order.
+    Within each (driver, situation) list, take every pair of songs the driver
+    rated differently and count how often the model orders them correctly.
+    Lists are then averaged with equal weight, as nDCG is, so the three drivers
+    who rated hundreds of songs do not drown out the rest. 0.5 is a coin flip,
+    1.0 a perfect order.
     """
     pred = np.asarray(pred, dtype=float)
     truth = rows["rating"].to_numpy(dtype=float)
-    hits, total = 0.0, 0
+    scores = []
     for idx in _groups(rows):
         dr = np.sign(truth[idx][:, None] - truth[idx][None, :])
         dp = np.sign(pred[idx][:, None] - pred[idx][None, :])
         upper = np.triu(dr != 0, k=1)
         agree = np.where(dp == 0, 0.5, (dr == dp).astype(float))
-        hits += float(agree[upper].sum())
-        total += int(upper.sum())
-    return hits / total if total else float("nan")
+        scores.append(float(agree[upper].mean()))
+    return float(np.mean(scores)) if scores else float("nan")
 
 
 def _dcg(gains_in_order: np.ndarray, pred_in_order: np.ndarray, k: int) -> float:

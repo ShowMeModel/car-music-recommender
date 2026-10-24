@@ -12,7 +12,7 @@ The code is the `carmusic` package in `src/carmusic/`. `legacy/` holds the origi
 
 ```shell
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.11+, tested on 3.13
-.venv/bin/pytest                                            # ~15 s
+.venv/bin/pytest                                            # 30 tests, ~17 s
 .venv/bin/pytest tests/test_models.py::test_gbdt_features_never_see_their_own_rating
 .venv/bin/ruff check src tests && .venv/bin/ruff format src tests
 .venv/bin/carmusic evaluate                                 # 5-fold, both protocols, ~70 s
@@ -27,20 +27,20 @@ The system `python3` is 3.9 and cannot run this. `.venv` was built from `~/minic
 
 ## Architecture
 
-- `data.py`: `load()` turns the Excel file into one tidy table, one row per rating: `user, item, rating, dimension, condition, genre, artist, title`. A rating without context has `dimension == condition == "none"` (`NO_CONTEXT`). Every row has at most one situation.
+- `data.py`: `load()` turns the Excel file into one tidy table, one row per rating: `user, item, rating, dimension, condition, genre, artist, title, song`. `song` is the twin-aware song id. A rating without context has `dimension == condition == "none"` (`NO_CONTEXT`). Every row has at most one situation.
 - `protocol.py`: the two evaluation questions. `folds()` gives the test splits. `holdout()` gives the validation split that models tune on internally.
-  - `new-situation` hides random situational ratings; the pair stays known.
-  - `new-song` hides whole (user, item) pairs.
+  - `new-situation` hides random (user, song, condition) questions; the pair stays known.
+  - `new-song` hides whole (user, song) pairs, twins included.
   - Both score only situational rows.
 - `models/`: every model implements `RatingModel` (`fit`, `_predict`; `score` is unclipped and used for ranking, `predict` is clipped to 0–5). They are registered in `models/__init__.py:MODELS` as `factory(seed, protocol)`. `protocol` only tells a model which question its internal `holdout()` should ask; `None` means mixed, which is what `recommend` uses.
   - `factor.py:FactorModel` is one numpy engine (biases + dot products over declared fields, full-batch Adam, L2 chosen on the holdout). `biases`, `mf`, `camf` and `fm` are only field declarations over it. A field involving `condition` is absent on no-context rows; unseen values map to a zero padding slot.
-  - `gbdt.py:ContextGBDT` is the corrected 2019 model. It uses cross-fitted target statistics in two regimes (row folds = known song, pair folds = new song), stacked into one `HistGradientBoostingRegressor` with monotone constraints and early stopping on the holdout.
-- `metrics.py`: nDCG@10 and pairwise accuracy are computed **within (user, condition) groups**, tie-aware.
+  - `gbdt.py:ContextGBDT` is the corrected 2019 model. It uses cross-fitted target statistics in two regimes (question folds = known song, pair folds = new song), stacked into one `HistGradientBoostingRegressor` with monotone constraints and early stopping on the holdout.
+- `metrics.py`: nDCG@10 and pairwise accuracy are computed **within (user, condition) groups**, tie-aware, then macro-averaged over the groups. Pooling would let three heavy raters dominate.
 - `evaluate.py` and `cli.py`: repeated k-fold and Markdown tables. Results go to stdout, progress to stderr.
 
 ## Conventions worth preserving
 
-- **No leakage, ever.** No statistic a row is trained on may include that row's own rating (`test_gbdt_features_never_see_their_own_rating`). No hyperparameter may be chosen on a test fold; use `holdout()`. Never aggregate ratings across situations; that was the 2019 bug.
+- **No leakage, ever.** No statistic a row is trained on may include that row's own rating (`test_gbdt_features_never_see_their_own_rating`). No hyperparameter may be chosen on a test fold; use `holdout()`. Never aggregate ratings across situations; that was the 2019 bug. Any new split must group by `pair_keys()` (new song) or `question_keys()` (known song), never by raw `item`, or twins and repeated survey answers leak across it.
 - Every model must be deterministic for a given seed (`test_fitting_is_deterministic`), and the README numbers depend on it. Use `np.random.default_rng(seed)` or `random_state=seed`, never global RNG state.
 - Models must not crash on unseen users, songs or situations. They fall back to whatever they know.
 - Rank with `model.score()` (unclipped), not `predict()`. Clipping at 5 creates ties.
@@ -52,12 +52,14 @@ Known facts about the data:
 
 - 4,012 ratings, 42 users (`1001`–`1042`), 139 songs, 26 conditions in 8 dimensions, 10 genres.
 - 1,003 ratings have no context.
-- Every one of the 930 pairs has a no-context rating.
+- Six songs are listed twice (album version vs radio edit). `songs.song` is the shared id; `pair_keys()` / `question_keys()` use it.
+- 930 (user, item) pairs, which is 911 (user, song) pairs; every one has a no-context rating.
+- Six drivers took the survey more than once, so 101 situational ratings repeat an already-answered (user, song, condition) question.
 
 Known results (3 × 5-fold, seed 0):
 
-- `new-situation` RMSE: `mf` 0.952, `camf` 0.930, `gbdt` 0.929.
-- `new-song` RMSE: `mf` 1.388, `gbdt` 1.276, `fm` 1.292.
+- `new-situation` RMSE: `mf` 0.959, `camf` 0.936, `gbdt` 0.935.
+- `new-song` RMSE: `mf` 1.405, `gbdt` 1.276, `fm` 1.294.
 - A constant predictor scores pairwise accuracy exactly 0.5.
 
 ## Branches

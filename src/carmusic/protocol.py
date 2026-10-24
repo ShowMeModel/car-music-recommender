@@ -17,6 +17,16 @@ evaluation questions, and they are kept separate on purpose:
 
 Both protocols score only the situational ratings, so their numbers are
 comparable.
+
+Two quirks of the data are handled here, so that a "hidden" rating really is
+hidden:
+
+* Six songs appear twice in the catalogue (an album version and a radio
+  edit). Pairs are formed with the twin-aware ``song`` id, so ``new-song``
+  hides both twins together.
+* Some drivers took the survey twice and answered the same (song, situation)
+  question twice. ``new-situation`` hides whole questions, never one answer
+  of a repeated question.
 """
 
 from __future__ import annotations
@@ -25,9 +35,9 @@ from collections.abc import Iterator
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GroupKFold, KFold
+from sklearn.model_selection import GroupKFold
 
-from .data import is_contextual, pair_keys
+from .data import is_contextual, pair_keys, question_keys
 
 PROTOCOLS = ("new-situation", "new-song")
 
@@ -42,7 +52,9 @@ def folds(ratings: pd.DataFrame, protocol: str, n_folds: int = 5, seed: int = 0)
     contextual = np.flatnonzero(is_contextual(ratings))
     if protocol == "new-situation":
         everything = np.arange(len(ratings))
-        for _, test_pos in KFold(n_folds, shuffle=True, random_state=seed).split(contextual):
+        questions = question_keys(ratings)[contextual]
+        splitter = GroupKFold(n_folds, shuffle=True, random_state=seed)
+        for _, test_pos in splitter.split(contextual, groups=questions):
             test = contextual[test_pos]
             yield np.setdiff1d(everything, test), test
     elif protocol == "new-song":
@@ -77,9 +89,14 @@ def holdout(
     hidden_pairs = rng.choice(unique_pairs, size=n_pairs, replace=False)
     in_hidden_pair = np.isin(pairs, hidden_pairs)
 
+    # Situations to hide for songs that stay known: whole questions, so a repeated
+    # answer to the same question never sits on both sides.
     candidates = np.flatnonzero(contextual & ~in_hidden_pair)
-    n_rows = round(len(candidates) * fraction * (1.0 - share_songs))
-    hidden_rows = rng.choice(candidates, size=n_rows, replace=False)
+    questions = question_keys(ratings)[candidates]
+    unique_questions = np.unique(questions)
+    n_questions = round(len(unique_questions) * fraction * (1.0 - share_songs))
+    hidden_questions = rng.choice(unique_questions, size=n_questions, replace=False)
+    hidden_rows = candidates[np.isin(questions, hidden_questions)]
 
     validation_mask = np.zeros(len(ratings), dtype=bool)
     validation_mask[hidden_rows] = True

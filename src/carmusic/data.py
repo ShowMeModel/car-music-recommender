@@ -9,6 +9,7 @@ given without any context has both set to :data:`NO_CONTEXT`.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,7 +49,7 @@ class InCarMusic:
     """One row per rating: user, item, rating, dimension, condition, genre, artist, title."""
 
     songs: pd.DataFrame
-    """One row per song: item, artist, title, genre."""
+    """One row per song: item, artist, title, genre, song (see :func:`load`)."""
 
     situations: pd.DataFrame
     """One row per context condition: dimension, condition."""
@@ -74,8 +75,21 @@ def _strip_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def _recording_key(artist: str, title: str) -> str:
+    """Artist and title without edition suffixes: "Bad Romance - Radio Edit" -> "lady gaga|bad romance"."""
+    title = re.sub(r"\(.*?\)|\s+-\s+.*$", "", title.lower())
+    clean = [re.sub(r"[^0-9a-z]+", " ", part).strip() for part in (artist.lower(), title)]
+    return "|".join(clean)
+
+
 def load(path: str | os.PathLike | None = None) -> InCarMusic:
     """Read ``Data_InCarMusic.xlsx`` and return it as tidy tables.
+
+    The catalogue lists six songs twice, under two ids: a radio edit next to
+    the album version, or the same title entered twice. ``item`` keeps the
+    original id. ``song`` is the same for both twins (the lower of the two
+    ids), so the evaluation can hide a song from a driver *together with* its
+    twin.
 
     The path can also be set through the ``CARMUSIC_DATA`` environment variable.
     """
@@ -100,6 +114,8 @@ def load(path: str | os.PathLike | None = None) -> InCarMusic:
     if songs["genre"].isna().any():
         raise ValueError("some songs have a category that is not in 'Music Category'")
     songs = songs.sort_values("item", ignore_index=True)
+    recording = [_recording_key(a, t) for a, t in zip(songs["artist"], songs["title"], strict=True)]
+    songs["song"] = songs.groupby(recording)["item"].transform("min")
 
     context = raw[list(CONTEXT_COLUMNS)]
     filled = context.notna()
@@ -147,5 +163,20 @@ def is_contextual(rows: pd.DataFrame) -> np.ndarray:
 
 
 def pair_keys(rows: pd.DataFrame) -> np.ndarray:
-    """One integer per (user, song) pair, usable as a group label."""
-    return rows["user"].to_numpy(dtype=np.int64) * 100_000 + rows["item"].to_numpy(dtype=np.int64)
+    """One integer per (user, song) pair, usable as a group label.
+
+    Uses the twin-aware ``song`` column when present, so a driver's ratings of
+    "Bad Romance" and "Bad Romance - Radio Edit" count as one pair.
+    """
+    song = rows["song"] if "song" in rows.columns else rows["item"]
+    return rows["user"].to_numpy(dtype=np.int64) * 100_000 + song.to_numpy(dtype=np.int64)
+
+
+def question_keys(rows: pd.DataFrame) -> np.ndarray:
+    """One integer per (user, song, condition): the question a single rating answers.
+
+    Some drivers took the survey twice and answered the same question again.
+    Grouping by this key keeps both answers on the same side of a split.
+    """
+    codes = pd.factorize(rows["condition"].astype(str))[0].astype(np.int64)
+    return pair_keys(rows) * 100 + codes

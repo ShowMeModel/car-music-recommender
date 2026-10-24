@@ -18,11 +18,12 @@ def test_pair_accuracy_extremes():
     assert pair_accuracy(rows, np.full(4, 2.5)) == 0.5
 
 
-def test_pair_accuracy_ignores_pairs_rated_equally_and_other_lists():
+def test_pair_accuracy_skips_equal_ratings_and_weighs_lists_equally():
     rows = pd.concat([one_list([4, 4, 1]), one_list([2, 3]).assign(condition="sun")], ignore_index=True)
-    # list 1 has two informative pairs (4>1, 4>1), list 2 has one (3>2)
+    # list 1: two informative pairs (4>1 twice), one ordered right -> 0.5
+    # list 2: one informative pair (3>2), ordered right -> 1.0
     pred = np.array([3.0, 0.0, 1.0, 0.0, 1.0])
-    assert pair_accuracy(rows, pred) == pytest.approx(2 / 3)
+    assert pair_accuracy(rows, pred) == pytest.approx(0.75)
 
 
 def test_ndcg_is_one_for_a_perfect_order_and_less_otherwise():
