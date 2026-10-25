@@ -10,7 +10,7 @@ the label away.
 
 Run from the repository root with the current environment:
 
-    python legacy/check_2019_leak.py
+    python legacy/check_leak.py
 
 It prints the cross-validated F1 of the same kind of model (scikit-learn's
 GradientBoostingClassifier) on different feature subsets, and how many of the

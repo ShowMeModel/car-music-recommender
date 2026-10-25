@@ -21,15 +21,15 @@ leak.
 | `dataset.csv`, `dataset_aggr.csv`, `*.pickle`, `music_type.csv` | Outputs of the exploratory notebook. |
 | `Data_InCarMusic.xlsx` | Copy of `data/Data_InCarMusic.xlsx`, where the notebooks expect it. |
 | `requirements.txt` | The original, unpinned dependency list (Python 3.6 era). |
-| `check_2019_leak.py` | *Added in 2026.* Rebuilds the notebooks' negative sampling with the current stack and shows where the F1 came from. |
+| `check_leak.py` | *Added in 2026.* Rebuilds the notebooks' negative sampling with the current stack and shows where the F1 came from. |
 
 Running the notebooks needs a 2019-era environment: Python 3.6–3.8, pandas
 below 2.0, scikit-learn below 1.2, the TPOT 0.x API, and Spotlight installed
-from GitHub. `check_2019_leak.py` needs only the main project's
+from GitHub. `check_leak.py` needs only the main project's
 dependencies:
 
 ```shell
-python legacy/check_2019_leak.py
+python legacy/check_leak.py
 ```
 
 Don't unpickle the `.pickle` files unless you trust them. Nothing reads them;

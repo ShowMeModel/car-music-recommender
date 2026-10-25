@@ -392,7 +392,7 @@ Each problem below was checked against the notebooks.
    the label. With `genre_ratio` and the song's genre alone, the same
    classifier scores F1 **0.785**, about the reported 0.79. With every feature
    except `genre_ratio`, it scores **0.437**, worse than a coin flip on a
-   balanced set. `python legacy/check_2019_leak.py` reproduces these numbers
+   balanced set. `python legacy/check_leak.py` reproduces these numbers
    in a few seconds.
 5. **The reported score is the best of many tries, on the same data.** The
    0.790 is the cross-validated F1 of the best of 250 randomly searched
@@ -458,7 +458,7 @@ src/carmusic/
 tests/               data, protocols, metrics, leakage, models, CLI
 data/                Data_InCarMusic.xlsx and the dataset's citation
 docs/                banner-light.svg, banner-dark.svg
-legacy/              the liked/not-liked notebooks (see the pitfall), check_2019_leak.py
+legacy/              the liked/not-liked notebooks (see the pitfall), check_leak.py
 ```
 
 ## Literature
