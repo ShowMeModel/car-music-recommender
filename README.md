@@ -9,22 +9,22 @@ traffic jam, a sleepy night drive, a serpentine road or a sad mood. The
 question is whether a recommender can learn how the drive changes the rating,
 and use that to reorder the playlist.
 
-The first version of this repository (2019) answered yes, with an F1-score of
-0.79. That number turned out to measure something else. One feature copied
-onto the invented "negative" examples gave the label away, and every
-situation had been averaged out of the data before any model saw it. This
-version starts again:
+This repository compares three context-aware models, each measured against
+context-free baselines under an evaluation protocol that cannot leak:
 
-* an evaluation protocol that cannot leak,
-* the 2019 gradient-boosting idea rebuilt so that it predicts what it claims
-  to,
-* two alternatives from the context-aware recommender literature,
-* baselines, so every number has something to be compared with.
+* `gbdt`, gradient-boosted trees over cross-fitted rating statistics,
+* `camf`, context-aware matrix factorisation, the design proposed by the
+  dataset's authors,
+* `fm`, a factorisation machine over driver, song, genre and situation.
 
-The answer is smaller than 0.79, and more interesting. A situation moves a
-rating by a fraction of a star, enough to reorder a driver's top five. Knowing
-the situation helps most with songs the driver has never rated: there, the
-best model cuts the error of a context-free recommender by 9%.
+The answer is yes, by a modest margin. A situation moves a rating by a
+fraction of a star, enough to reorder a driver's top five. Knowing the
+situation helps most with songs the driver has never rated: there, the best
+model cuts the error of a context-free recommender by 9%.
+
+A separate section shows how a common shortcut, a liked/not-liked classifier
+on aggregated ratings, reaches an F1-score of 0.79 almost entirely through a
+label leak.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
@@ -208,11 +208,11 @@ searched:
   grid `1, 3, 10, 30`;
 * for `gbdt`, its tree size, learning rate and shrinkage strength.
 
-One design decision was informed by a first evaluation run. Tuning every model
-on a single mixed validation slice over-regularised the factor models for
-known songs, which is why each now validates on the question it is asked. An
-independent review re-ran the evaluation with a far wider penalty grid
-(0.1–1000) and longer training. No result improved and no ranking changed.
+One choice was made after looking at evaluation results. A single mixed
+validation slice over-regularises the factor models for known songs, so each
+model validates on the question it is asked. Re-running the evaluation with a
+far wider penalty grid (0.1–1000) and longer training improved no result and
+changed no ranking.
 
 ## The three solutions
 
@@ -220,15 +220,15 @@ All three predict the rating in context. They share an interface
 (`fit` / `predict` / `score`) and a seed, so they are directly comparable and
 deterministic.
 
-### 1. `gbdt`: the 2019 model, corrected
+### 1. `gbdt`: gradient-boosted trees on rating statistics
 
-The 2019 solution was a gradient-boosted classifier, and the idea of a tree
-ensemble over hand-made features is a reasonable one. `src/carmusic/models/gbdt.py`
-keeps it and fixes the parts that made it unsound:
+A tree ensemble over hand-made features is the natural first idea for a small
+tabular dataset. It works here only if the features are built with care
+(`src/carmusic/models/gbdt.py`):
 
-* **The target is the rating, in its situation.** There is no averaging across
-  situations and no invented negatives; the data has 1,610 real ratings of 0
-  or 1 stars.
+* **The target is the rating, in its situation.** Nothing is averaged across
+  situations and no negatives are invented; the data already holds 1,610
+  ratings of 0 or 1 stars.
 * **No feature ever sees its own row's rating.** Driver, song and situation
   statistics are *cross-fitted*, as in target encoding: each training row gets
   them from the other folds, and a test row from the whole training set. A
@@ -365,42 +365,45 @@ What the tables say:
   more than a star on average. The data is 42 people imagining situations
   they were not in, mostly rating pop.
 
-## What was wrong with the 2019 version
+## Pitfall: the liked/not-liked classifier
 
-The original notebooks are kept unchanged in [`legacy/`](legacy/). Each problem
-below was checked against them.
+A tempting way to frame this data is as classification: did this driver like
+this song? The notebooks in [`legacy/`](legacy/) take that route, with an
+exploratory analysis, Spotlight, LightFM, a scikit-learn classifier and a TPOT
+search, and report an F1-score of 0.79. That number measures something else.
+Each problem below was checked against the notebooks.
 
-1. **The context was averaged away.** The exploratory notebook aggregated all
+1. **The context is averaged away.** The exploratory notebook aggregates all
    ratings of a (driver, song) pair into one row, summing the situation
    columns. Every one of the 930 rows therefore claims three or more
-   situations at once. The modelling notebooks trained on that table. The
-   Spotlight notebook also tried the raw ratings, but with no context
-   columns at all. So none of them could learn anything about a particular
-   situation.
-2. **"Liked" meant "rated".** The classifier's positive label was every pair
-   the driver had rated, whatever the rating. 41% of those "liked" pairs
-   average below 2 stars out of 5.
-3. **The invented negatives were partly real.** Each negative paired a driver
-   with a random song, excluding only the one song of the positive row. In a
-   re-run, 47% of the "negatives" were songs that driver had in fact rated.
-4. **One feature leaked the label.** `genre_ratio`, the share of the driver's
-   ratings in *the positive song's genre*, was copied unchanged onto the
+   situations at once. The modelling notebooks train on that table. The
+   Spotlight notebook also tries the raw ratings, but with no context columns
+   at all. So none of them can learn anything about a particular situation.
+2. **"Liked" means "rated".** The classifier's positive label is every pair
+   the driver rated, whatever the rating. 41% of those "liked" pairs average
+   below 2 stars out of 5.
+3. **The invented negatives are partly real.** Each negative pairs a driver
+   with a random song, excluding only the one song of the positive row. When
+   the sampling is re-run, 47% of the "negatives" are songs that driver did
+   rate.
+4. **One feature leaks the label.** `genre_ratio`, the share of the driver's
+   ratings in *the positive song's genre*, is copied unchanged onto the
    invented negative row, whose song has another genre. That mismatch reveals
    the label. With `genre_ratio` and the song's genre alone, the same
-   classifier scores F1 **0.785**, about the 2019 headline of 0.79. With every
-   feature except `genre_ratio`, it scores **0.437**, worse than a coin flip
-   on a balanced set. `python legacy/check_2019_leak.py` reproduces these
-   numbers in a few seconds.
-5. **The reported score was the best of many tries, on the same data.** The
+   classifier scores F1 **0.785**, about the reported 0.79. With every feature
+   except `genre_ratio`, it scores **0.437**, worse than a coin flip on a
+   balanced set. `python legacy/check_2019_leak.py` reproduces these numbers
+   in a few seconds.
+5. **The reported score is the best of many tries, on the same data.** The
    0.790 is the cross-validated F1 of the best of 250 randomly searched
    configurations, scored on the same folds used to pick it. The per-driver
-   features had been computed on the full dataset before any split. The TPOT
-   run (0.796) did keep a test split, but it inherits the leak in point 4.
-   Neither result was compared with a baseline.
-6. **The recommenders were mis-sized.** The LightFM model used 2,000 latent
+   features are computed on the full dataset before any split. The TPOT run
+   (0.796) does keep a test split, but it inherits the leak in point 4.
+   Neither result is compared with a baseline.
+6. **The recommenders are mis-sized.** The LightFM model uses 2,000 latent
    dimensions for 42 drivers and 139 songs.
-7. **The stack has rotted.** Python 3.6, unpinned requirements, and libraries
-   that are unmaintained or have changed their API:
+7. **They need an old stack.** Python 3.6, unpinned requirements, and
+   libraries that are unmaintained or have since changed their API:
    * `spotlight`, which was never published on PyPI and is no longer
      maintained,
    * the TPOT 0.x API,
@@ -409,8 +412,8 @@ below was checked against them.
    * `DataFrame.append`,
    * `loss='deviance'`.
 
-The F1 of 0.79 should be read as an artefact, not as evidence that the 2019
-model could recommend music.
+The F1 of 0.79 is an artefact of the setup, not evidence that the classifier
+can recommend music.
 
 ## Other ways to solve it
 
@@ -449,36 +452,14 @@ src/carmusic/
     base.py          the RatingModel interface
     factor.py        the bias + latent-factor engine behind biases, mf, camf, fm
     baselines.py     global-mean, biases, mf, seen-before
-    gbdt.py          solution 1, the corrected 2019 model
+    gbdt.py          solution 1, gradient boosting on cross-fitted statistics
     camf.py          solution 2
     fm.py            solution 3
 tests/               data, protocols, metrics, leakage, models, CLI
 data/                Data_InCarMusic.xlsx and the dataset's citation
 docs/                banner-light.svg, banner-dark.svg
-legacy/              the 2019 notebooks, their outputs, and check_2019_leak.py
+legacy/              the liked/not-liked notebooks (see the pitfall), check_2019_leak.py
 ```
-
-## History
-
-The first version (2019) was a set of Jupyter notebooks:
-
-* an exploratory analysis with clustering and association rules,
-* a deep recommender with Spotlight,
-* a LightFM hybrid,
-* a scikit-learn classifier,
-* a TPOT AutoML search,
-
-all on Python 3.6. They now live in `legacy/`, untouched apart from the move.
-
-The 2026 refresh made these changes:
-
-* replaced the notebooks with a tested Python package and a CLI,
-* rebuilt the data pipeline so that no situation is averaged away,
-* defined two evaluation protocols that cannot leak,
-* found and documented the leak behind the 2019 score,
-* rebuilt the gradient-boosting model to predict ratings in context,
-* added CAMF and a factorisation machine as alternatives, with baselines,
-* dropped every dependency beyond numpy, pandas, scikit-learn and openpyxl.
 
 ## Literature
 
